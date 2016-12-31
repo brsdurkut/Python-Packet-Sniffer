@@ -1,0 +1,1 @@
+{"rules": [{"dst_ip": "ALL", "src_ip": "ALL", "dst_port": "80", "flg": "SYN", "id": 0, "src_port": "ALL"}, {"dst_ip": "193.140.248.134", "src_ip": "ALL", "dst_port": "ALL", "flg": "ALL", "id": 1, "src_port": "ALL"}]}

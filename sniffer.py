@@ -1,93 +1,100 @@
 import socket
-from general import *
-from networking.ethernet import Ethernet
-from networking.ipv4 import IPv4
-from networking.icmp import ICMP
-from networking.tcp import TCP
-from networking.udp import UDP
-from networking.pcap import Pcap
-from networking.http import HTTP
-
-TAB_1 = '\t - '
-TAB_2 = '\t\t - '
-TAB_3 = '\t\t\t - '
-TAB_4 = '\t\t\t\t - '
-
-DATA_TAB_1 = '\t   '
-DATA_TAB_2 = '\t\t   '
-DATA_TAB_3 = '\t\t\t   '
-DATA_TAB_4 = '\t\t\t\t   '
+import _thread
+import traceback
+from datetime import datetime
+import sys
+import time
+from networking.packet import Packet
 
 
-def main():
-    pcap = Pcap('capture.pcap')
-    conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
+class Sniffer(object):
+    def __init__(self, rule):
+        self.rule = rule
+        self.rule_list = []
+        self.packet_list = []
+        self.running = False
+        self.paused = False
 
-    while True:
-        raw_data, addr = conn.recvfrom(65535)
-        pcap.write(raw_data)
-        eth = Ethernet(raw_data)
+    def get_str(self, data):
+        return str(data["details"])
 
-        print('\nEthernet Frame:')
-        print(TAB_1 + 'Destination: {}, Source: {}, Protocol: {}'.format(eth.dest_mac, eth.src_mac, eth.proto))
+    def add_packet(self, packet):
+        try:
+            packet_item = {
+                    "time":datetime.now(), 
+                    "details":packet }
 
-        # IPv4
-        if eth.proto == 8:
-            ipv4 = IPv4(eth.data)
-            print(TAB_1 + 'IPv4 Packet:')
-            print(TAB_2 + 'Version: {}, Header Length: {}, TTL: {},'.format(ipv4.version, ipv4.header_length, ipv4.ttl))
-            print(TAB_2 + 'Protocol: {}, Source: {}, Target: {}'.format(ipv4.proto, ipv4.src, ipv4.target))
+            self.packet_list.append(packet_item)
+            return self.packet_list
+        except:
+            traceback.print_exc(limit=1, file=sys.stdout)
 
-            # ICMP
-            if ipv4.proto == 1:
-                icmp = ICMP(ipv4.data)
-                print(TAB_1 + 'ICMP Packet:')
-                print(TAB_2 + 'Type: {}, Code: {}, Checksum: {},'.format(icmp.type, icmp.code, icmp.checksum))
-                print(TAB_2 + 'ICMP Data:')
-                print(format_multi_line(DATA_TAB_3, icmp.data))
+    def clear_list(self):
+        self.packet_list = []
+        return self.packet_list
 
-            # TCP
-            elif ipv4.proto == 6:
-                tcp = TCP(ipv4.data)
-                print(TAB_1 + 'TCP Segment:')
-                print(TAB_2 + 'Source Port: {}, Destination Port: {}'.format(tcp.src_port, tcp.dest_port))
-                print(TAB_2 + 'Sequence: {}, Acknowledgment: {}'.format(tcp.sequence, tcp.acknowledgment))
-                print(TAB_2 + 'Flags:')
-                print(TAB_3 + 'URG: {}, ACK: {}, PSH: {}'.format(tcp.flag_urg, tcp.flag_ack, tcp.flag_psh))
-                print(TAB_3 + 'RST: {}, SYN: {}, FIN:{}'.format(tcp.flag_rst, tcp.flag_syn, tcp.flag_fin))
+    def check_packet(self, packet):
+        try:
+            p = packet.get_summary()
+            for r in self.rule_list:
+                count = 0
+                for k in r.keys():
+                    if k != "id" and r[k] != "ALL":
+                        count += 1
+                print(count)
+                for k,v in r.items():
+                    if k == "id" or r[k] == "ALL":
+                        continue
+                    if p[k] == v:
+                        count -= 1
+                if count == 0:
+                    return True
+            return False
+        except:
+            traceback.print_exc(limit=1, file=sys.stdout)
 
-                if len(tcp.data) > 0:
+    def start(self, sgnl):
+        if self.running == True:
+            self.stop()
+        self.running = True
+        _thread.start_new_thread(self.run, (sgnl,))
+        print("started")
 
-                    # HTTP
-                    if tcp.src_port == 80 or tcp.dest_port == 80:
-                        print(TAB_2 + 'HTTP Data:')
-                        try:
-                            http = HTTP(tcp.data)
-                            http_info = str(http.data).split('\n')
-                            for line in http_info:
-                                print(DATA_TAB_3 + str(line))
-                        except:
-                            print(format_multi_line(DATA_TAB_3, tcp.data))
-                    else:
-                        print(TAB_2 + 'TCP Data:')
-                        print(format_multi_line(DATA_TAB_3, tcp.data))
+    def stop(self):
+        self.running = False
+        self.paused = False
+        self.clear_list = []
+        print("stopped")
 
-            # UDP
-            elif ipv4.proto == 17:
-                udp = UDP(ipv4.data)
-                print(TAB_1 + 'UDP Segment:')
-                print(TAB_2 + 'Source Port: {}, Destination Port: {}, Length: {}'.format(udp.src_port, udp.dest_port, udp.size))
+    def run(self, signl):
+        time.sleep(1)
 
-            # Other IPv4
+        self.rule_list = self.rule._get_rules()
+        self.running = True
+        while self.running:
+            if self.paused == False:
+                conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
+                raw_data, addr = conn.recvfrom(65535)
+                pckt = Packet(raw_data)
+                if self.check_packet(pckt):
+                    self.add_packet(pckt)
+                    signl.speakNumber.emit(10)
+                    print(pckt)
             else:
-                print(TAB_1 + 'Other IPv4 Data:')
-                print(format_multi_line(DATA_TAB_2, ipv4.data))
-
+                break
         else:
-            print('Ethernet Data:')
-            print(format_multi_line(DATA_TAB_1, eth.data))
+            self.stop()
+        print("run_func stopped")
 
-    pcap.close()
+if __name__ == "__main__":
+    from rules.rule import Rule
+    import time
+    rule = Rule()
+    rule._load("data/rules")
+    sniffer = Sniffer(rule)
+    sniffer.start()
+    time.sleep(5)
+    sniffer.stop()
+    print([p["details"].get_summary() for p in sniffer.packet_list])
+    print(rule._get_rules())
 
-
-main()
